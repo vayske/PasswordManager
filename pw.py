@@ -5,27 +5,24 @@ from Crypto.Cipher import AES
 from base64 import b64encode, b64decode
 from getpass import getpass
 
-key = b'16 byte password'
+key = b''
+iv = b''
 
 
 def encode_data(data):
     encrypt = []
     for info in data:
-        cipher = AES.new(key, AES.MODE_CFB)
+        cipher = AES.new(key, AES.MODE_CFB, iv=iv)
         ciphertext = cipher.encrypt(bytearray(info, 'utf-8'))
-        ciphertext = b64encode(ciphertext).decode('utf-8')
-        tag = b64encode(cipher.iv).decode('utf-8')
         encrypt.append(ciphertext)
-        encrypt.append(tag)
     return encrypt
 
 
 def decode_data(data):
     decrypt = []
-    for i in range(1, len(data)-1, 2):
-        ciphertext = b64decode(data[i])
-        tag = b64decode(data[i+1])
-        cipher = AES.new(key, AES.MODE_CFB, iv=tag)
+    for i in range(1, len(data)):
+        ciphertext = data[i]
+        cipher = AES.new(key, AES.MODE_CFB, iv=iv)
         info = cipher.decrypt(ciphertext)
         decrypt.append(info.decode('utf-8'))
     return decrypt
@@ -47,13 +44,9 @@ def create_table(connect):
         sql = '''CREATE TABLE IF NOT EXISTS manager (
                     id integer PRIMARY KEY,
                     name text NOT NULL,
-                    tag1 text NOT NULL,
                     account text NOT NULL,
-                    tag2 text NOT NULL,
                     password text NOT NULL,
-                    tag3 text NOT NULL,
-                    desc text NOT NULL,
-                    tag4 text NOT NULL);'''
+                    desc text NOT NULL);'''
         cursor = connect.cursor()
         cursor.execute(sql)
     except Error as e:
@@ -63,8 +56,8 @@ def create_table(connect):
 def insert_password(connect, data):
     connect: sqlite3.Connection
     try:
-        sql = '''INSERT INTO manager(name,tag1,account,tag2,password,tag3,desc,tag4)
-                 VALUES(?,?,?,?,?,?,?,?)'''
+        sql = '''INSERT INTO manager(name,account,password,desc)
+                 VALUES(?,?,?,?)'''
         data = encode_data(data)
         cursor = connect.cursor()
         cursor.execute(sql, data)
@@ -78,19 +71,9 @@ def update_password(connect, data):
     try:
         id = data[2]
         field, value = data[:2]
-        tag = ''
-        if field == 'name':
-            tag = 'tag1'
-        elif field == 'account':
-            tag = 'tag2'
-        elif field == 'password':
-            tag = 'tag3'
-        elif field == 'desc':
-            tag = 'tag4'
         sql = '''UPDATE manager
-                 SET {}=?,
-                     {}=?
-                 WHERE id = ?'''.format(field, tag)
+                 SET {}=?
+                 WHERE id = ?'''.format(field)
         encrypt = encode_data([value])
         encrypt.append(id)
         cursor = connect.cursor()
@@ -111,17 +94,19 @@ def delete_password(connect, id):
         print(e)
 
 
-def select_tag(connect, tag, value):
+def select_field(connect, field, value):
     connect: sqlite3.Connection
     try:
-        sql = '''SELECT * FROM manager WHERE {}=?'''.format(tag)
+        sql = '''SELECT * FROM manager WHERE {}=?'''.format(field)
+        if field != 'id':
+            value = encode_data([value])
         cursor = connect.cursor()
-        cursor.execute(sql, (value,))
+        cursor.execute(sql, value)
         rows = cursor.fetchall()
         for row in rows:
             id = row[0]
             name, account, password, desc = decode_data(row)
-            print('ID {}:\n    Name: {}\n    Account: {}\n    Password: {}\n    Description: {}'
+            print('ID {}:\n    Name: {}\n    Account: {}\n    Password: {}\n    Description: {}\n'
                   .format(id, name, account, password, desc))
     except Error as e:
         print(e)
@@ -137,45 +122,49 @@ def list_all(connect):
         for row in rows:
             id = row[0]
             name, account, password, desc = decode_data(row)
-            print('ID {}:\n    Name: {}\n    Account: {}\n    Password: {}\n    Description: {}'
+            print('ID {}:\n    Name: {}\n    Account: {}\n    Password: {}\n    Description: {}\n'
                   .format(id, name, account, password, desc))
     except Error as e:
         print(e)
 
 
 def user_select(connect):
-    tag = 'id'
-    value = input('Enter id: ')
-    select_tag(connect, tag, value)
+    field = input('\nEnter a Field to select by: ').lower()
+    if field != 'id' and field != 'name' and field != 'account' and field != 'password' and field != 'desc':
+        print('\nInvalid Field {} (Valid input: Id, Name, Account, Password, Desc)\n'.format(field))
+        return
+    value = input('Enter {}: '.format(field))
+    select_field(connect, field, value)
 
 
 def user_insert(connect):
-    name = input('Enter Name: ')
+    name = input('\nEnter Name: ')
     account = input('Enter Account: ')
     password = input('Enter Password: ')
     desc = input('Enter Description: ')
     insert_password(connect, (name, account, password, desc))
-    print('Insertion Completed')
+    print('\nInsertion Completed\n')
 
 
 def user_update(connect):
-    id = input('Enter ID: ')
+    id = input('\nEnter ID: ')
     field = input('Enter a field to update: ').lower()
     if field != 'name' and field != 'account' and field != 'password' and field != 'desc':
-        print('Invalid Field {} (Available fields: name, account, password, desc)'.format(field))
+        print('\nInvalid Field {} (Valid input: Name, Account, Password, Desc)\n'.format(field))
         return
     value = input('Enter new value: ')
     update_password(connect, (field, value, id))
+    print('\nUpdate Completed\n')
 
 
 def user_delete(connect):
-    id = input('Enter ID: ')
+    id = input('\nEnter ID: ')
     sure = input('Are You Sure?(y/n)\n')
     if sure.capitalize() == 'Y':
         delete_password(connect, id)
-        print('ID {} Deleted'.format(id))
+        print('\nID {} Deleted\n'.format(id))
     else:
-        print('Deletion Cancelled')
+        print('\nDeletion Cancelled\n')
 
 
 def command_handler(connect, command):
@@ -200,6 +189,8 @@ def command_handler(connect, command):
               '\n\tdelete \t--- Delete information by ID',
               '\n\tls \t--- List all information',
               '\n\tcls \t--- Clear screen')
+    elif command == 'iv':
+        print(iv)
 
 
 def main():
@@ -218,7 +209,7 @@ def main():
             while run:
                 try:
                     command = input('manager> ')
-                    if command == 'exit()':
+                    if command == 'exit':
                         connect.close()
                         run = False
                     else:
